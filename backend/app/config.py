@@ -42,6 +42,10 @@ class Config:
     GRAPHITI_RETRY3_BASE_URL = os.environ.get('GRAPHITI_RETRY3_BASE_URL')
     GRAPHITI_RETRY3_LLM_MODEL = os.environ.get('GRAPHITI_RETRY3_LLM_MODEL')
     GRAPHITI_RETRY3_EMBEDDING_MODEL = os.environ.get('GRAPHITI_RETRY3_EMBEDDING_MODEL')
+    # Internal LLM request throttle/retry (applies to LLMClient calls)
+    LLM_RATE_LIMIT_RPS = float(os.environ.get('LLM_RATE_LIMIT_RPS', '1.0'))
+    LLM_RATE_LIMIT_MAX_RETRIES = int(os.environ.get('LLM_RATE_LIMIT_MAX_RETRIES', '3'))
+    LLM_RATE_LIMIT_RETRY_BUFFER_SECONDS = float(os.environ.get('LLM_RATE_LIMIT_RETRY_BUFFER_SECONDS', '0.2'))
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')

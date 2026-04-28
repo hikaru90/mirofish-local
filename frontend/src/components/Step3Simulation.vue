@@ -398,7 +398,7 @@ const doStartSimulation = async () => {
     const params = {
       simulation_id: props.simulationId,
       platform: 'parallel',
-      force: true,  // 强制重新开始
+      force: false,
       enable_graph_memory_update: true  // 开启动态图谱更新
     }
     
@@ -434,6 +434,48 @@ const doStartSimulation = async () => {
     emit('update-status', 'error')
   } finally {
     isStarting.value = false
+  }
+}
+
+const hydrateOrStartSimulation = async () => {
+  if (!props.simulationId) {
+    addLog(t('log.errorMissingSimId'))
+    return
+  }
+
+  try {
+    const statusRes = await getRunStatus(props.simulationId)
+    if (!(statusRes.success && statusRes.data)) {
+      await doStartSimulation()
+      return
+    }
+
+    const data = statusRes.data
+    runStatus.value = data
+
+    // Reuse existing simulation state first, avoid recomputing if already started.
+    if (data.runner_status === 'running') {
+      phase.value = 1
+      emit('update-status', 'processing')
+      addLog(t('log.detectedSimRunning'))
+      startStatusPolling()
+      startDetailPolling()
+      await fetchRunStatusDetail()
+      return
+    }
+
+    if (data.runner_status === 'completed' || data.runner_status === 'stopped') {
+      phase.value = 2
+      emit('update-status', 'completed')
+      addLog(t('log.simCompleted'))
+      await fetchRunStatusDetail()
+      return
+    }
+
+    await doStartSimulation()
+  } catch (err) {
+    addLog(t('log.startException', { error: err.message }))
+    emit('update-status', 'error')
   }
 }
 
@@ -658,7 +700,7 @@ const handleNextStep = async () => {
   try {
     const res = await generateReport({
       simulation_id: props.simulationId,
-      force_regenerate: true
+      force_regenerate: false
     })
     
     if (res.success && res.data) {
@@ -666,7 +708,11 @@ const handleNextStep = async () => {
       addLog(t('log.reportGenTaskStarted', { reportId }))
       
       // 跳转到报告页面
-      router.push({ name: 'Report', params: { reportId } })
+      router.push({
+        name: 'Report',
+        params: { projectId: props.projectData?.project_id || 'unknown' },
+        query: { reportId }
+      })
     } else {
       addLog(t('log.reportGenFailed', { error: res.error || t('common.unknownError') }))
       isGeneratingReport.value = false
@@ -689,9 +735,7 @@ watch(() => props.systemLogs?.length, () => {
 
 onMounted(() => {
   addLog(t('log.step3Init'))
-  if (props.simulationId) {
-    doStartSimulation()
-  }
+  hydrateOrStartSimulation()
 })
 
 onUnmounted(() => {

@@ -5,12 +5,16 @@
 
 import uuid
 import threading
+import os
+import json
+import sqlite3
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 
 from ..utils.locale import t
+from ..config import Config
 
 
 class TaskStatus(str, Enum):
@@ -68,9 +72,62 @@ class TaskManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._tasks: Dict[str, Task] = {}
                     cls._instance._task_lock = threading.Lock()
+                    cls._instance._db_path = os.path.join(Config.UPLOAD_FOLDER, "tasks.sqlite3")
+                    cls._instance._init_db()
         return cls._instance
+
+    def _init_db(self):
+        """初始化任务数据库"""
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    message TEXT NOT NULL DEFAULT '',
+                    result_json TEXT,
+                    error TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    progress_detail_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_type_created ON tasks(task_type, created_at DESC)"
+            )
+            conn.commit()
+
+    def _row_to_task(self, row: sqlite3.Row) -> Task:
+        return Task(
+            task_id=row["task_id"],
+            task_type=row["task_type"],
+            status=TaskStatus(row["status"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            progress=row["progress"] or 0,
+            message=row["message"] or "",
+            result=json.loads(row["result_json"]) if row["result_json"] else None,
+            error=row["error"],
+            metadata=json.loads(row["metadata_json"] or "{}"),
+            progress_detail=json.loads(row["progress_detail_json"] or "{}"),
+        )
+
+    def _get_task_no_lock(self, task_id: str) -> Optional[Task]:
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return self._row_to_task(row)
     
     def create_task(self, task_type: str, metadata: Optional[Dict] = None) -> str:
         """
@@ -85,25 +142,38 @@ class TaskManager:
         """
         task_id = str(uuid.uuid4())
         now = datetime.now()
-        
-        task = Task(
-            task_id=task_id,
-            task_type=task_type,
-            status=TaskStatus.PENDING,
-            created_at=now,
-            updated_at=now,
-            metadata=metadata or {}
-        )
-        
+
         with self._task_lock:
-            self._tasks[task_id] = task
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, task_type, status, created_at, updated_at,
+                        progress, message, result_json, error, metadata_json, progress_detail_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task_id,
+                        task_type,
+                        TaskStatus.PENDING.value,
+                        now.isoformat(),
+                        now.isoformat(),
+                        0,
+                        "",
+                        None,
+                        None,
+                        json.dumps(metadata or {}, ensure_ascii=False),
+                        json.dumps({}, ensure_ascii=False),
+                    ),
+                )
+                conn.commit()
         
         return task_id
     
     def get_task(self, task_id: str) -> Optional[Task]:
         """获取任务"""
         with self._task_lock:
-            return self._tasks.get(task_id)
+            return self._get_task_no_lock(task_id)
     
     def update_task(
         self,
@@ -128,21 +198,45 @@ class TaskManager:
             progress_detail: 详细进度信息
         """
         with self._task_lock:
-            task = self._tasks.get(task_id)
-            if task:
-                task.updated_at = datetime.now()
-                if status is not None:
-                    task.status = status
-                if progress is not None:
-                    task.progress = progress
-                if message is not None:
-                    task.message = message
-                if result is not None:
-                    task.result = result
-                if error is not None:
-                    task.error = error
-                if progress_detail is not None:
-                    task.progress_detail = progress_detail
+            task = self._get_task_no_lock(task_id)
+            if not task:
+                return
+
+            task.updated_at = datetime.now()
+            if status is not None:
+                task.status = status
+            if progress is not None:
+                task.progress = progress
+            if message is not None:
+                task.message = message
+            if result is not None:
+                task.result = result
+            if error is not None:
+                task.error = error
+            if progress_detail is not None:
+                task.progress_detail = progress_detail
+
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET status = ?, updated_at = ?, progress = ?, message = ?,
+                        result_json = ?, error = ?, metadata_json = ?, progress_detail_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        task.status.value,
+                        task.updated_at.isoformat(),
+                        int(task.progress),
+                        task.message or "",
+                        json.dumps(task.result, ensure_ascii=False) if task.result is not None else None,
+                        task.error,
+                        json.dumps(task.metadata or {}, ensure_ascii=False),
+                        json.dumps(task.progress_detail or {}, ensure_ascii=False),
+                        task_id,
+                    ),
+                )
+                conn.commit()
     
     def complete_task(self, task_id: str, result: Dict):
         """标记任务完成"""
@@ -166,10 +260,18 @@ class TaskManager:
     def list_tasks(self, task_type: Optional[str] = None) -> list:
         """列出任务"""
         with self._task_lock:
-            tasks = list(self._tasks.values())
-            if task_type:
-                tasks = [t for t in tasks if t.task_type == task_type]
-            return [t.to_dict() for t in sorted(tasks, key=lambda x: x.created_at, reverse=True)]
+            with sqlite3.connect(self._db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                if task_type:
+                    rows = conn.execute(
+                        "SELECT * FROM tasks WHERE task_type = ? ORDER BY created_at DESC",
+                        (task_type,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM tasks ORDER BY created_at DESC"
+                    ).fetchall()
+                return [self._row_to_task(row).to_dict() for row in rows]
     
     def cleanup_old_tasks(self, max_age_hours: int = 24):
         """清理旧任务"""
@@ -177,10 +279,18 @@ class TaskManager:
         cutoff = datetime.now() - timedelta(hours=max_age_hours)
         
         with self._task_lock:
-            old_ids = [
-                tid for tid, task in self._tasks.items()
-                if task.created_at < cutoff and task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]
-            ]
-            for tid in old_ids:
-                del self._tasks[tid]
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    """
+                    DELETE FROM tasks
+                    WHERE created_at < ?
+                      AND status IN (?, ?)
+                    """,
+                    (
+                        cutoff.isoformat(),
+                        TaskStatus.COMPLETED.value,
+                        TaskStatus.FAILED.value,
+                    ),
+                )
+                conn.commit()
 

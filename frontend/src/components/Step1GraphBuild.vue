@@ -258,7 +258,8 @@ const handleEnterEnvSetup = async () => {
       // 跳转到 simulation 页面
       router.push({
         name: 'Simulation',
-        params: { simulationId: res.data.simulation_id }
+        params: { projectId: props.projectData.project_id },
+        query: { simulationId: res.data.simulation_id }
       })
     } else {
       console.error('创建模拟失败:', res.error)

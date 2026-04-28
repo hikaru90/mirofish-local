@@ -200,9 +200,9 @@ const initProject = async () => {
 
 const handleNewProject = async () => {
   const pending = getPendingUpload()
-  if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No pending files found.'
-    addLog('Error: No pending files found for new project.')
+  if (!pending.isPending || !pending.sourceText?.trim()) {
+    error.value = 'No pending source text found.'
+    addLog('Error: No pending source text found for new project.')
     return
   }
   
@@ -210,13 +210,14 @@ const handleNewProject = async () => {
     loading.value = true
     currentPhase.value = 0
     ontologyProgress.value = { message: 'Uploading and analyzing docs...' }
-    addLog('Starting ontology generation: Uploading files...')
+    addLog('Starting ontology generation: Submitting source text...')
     
-    const formData = new FormData()
-    pending.files.forEach(f => formData.append('files', f))
-    formData.append('simulation_requirement', pending.simulationRequirement)
+    const payload = {
+      source_text: pending.sourceText,
+      simulation_requirement: pending.simulationRequirement
+    }
     
-    const res = await generateOntology(formData)
+    const res = await generateOntology(payload)
     if (res.success) {
       clearPendingUpload()
       currentProjectId.value = res.data.project_id

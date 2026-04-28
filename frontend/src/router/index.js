@@ -13,34 +13,83 @@ const routes = [
     component: Home
   },
   {
-    path: '/process/:projectId',
+    path: '/:projectId/process',
     name: 'Process',
     component: Process,
     props: true
   },
   {
-    path: '/simulation/:simulationId',
+    path: '/:projectId/simulation',
     name: 'Simulation',
     component: SimulationView,
-    props: true
+    props: route => ({
+      projectId: route.params.projectId,
+      simulationId: route.query.simulationId
+    })
+  },
+  {
+    path: '/:projectId/run',
+    name: 'SimulationRun',
+    component: SimulationRunView,
+    props: route => ({
+      projectId: route.params.projectId,
+      simulationId: route.query.simulationId
+    })
+  },
+  {
+    path: '/:projectId/report',
+    name: 'Report',
+    component: ReportView,
+    props: route => ({
+      projectId: route.params.projectId,
+      reportId: route.query.reportId
+    })
+  },
+  {
+    path: '/:projectId/interaction',
+    name: 'Interaction',
+    component: InteractionView,
+    props: route => ({
+      projectId: route.params.projectId,
+      reportId: route.query.reportId
+    })
+  },
+  // Legacy URLs -> canonical URLs
+  {
+    path: '/process/:projectId',
+    redirect: to => ({ name: 'Process', params: { projectId: to.params.projectId } })
+  },
+  {
+    path: '/simulation/:simulationId',
+    redirect: to => ({
+      name: 'Simulation',
+      params: { projectId: to.query.projectId || 'unknown' },
+      query: { simulationId: to.params.simulationId }
+    })
   },
   {
     path: '/simulation/:simulationId/start',
-    name: 'SimulationRun',
-    component: SimulationRunView,
-    props: true
+    redirect: to => ({
+      name: 'SimulationRun',
+      params: { projectId: to.query.projectId || 'unknown' },
+      query: { simulationId: to.params.simulationId, maxRounds: to.query.maxRounds }
+    })
   },
   {
     path: '/report/:reportId',
-    name: 'Report',
-    component: ReportView,
-    props: true
+    redirect: to => ({
+      name: 'Report',
+      params: { projectId: to.query.projectId || 'unknown' },
+      query: { reportId: to.params.reportId }
+    })
   },
   {
     path: '/interaction/:reportId',
-    name: 'Interaction',
-    component: InteractionView,
-    props: true
+    redirect: to => ({
+      name: 'Interaction',
+      params: { projectId: to.query.projectId || 'unknown' },
+      query: { reportId: to.params.reportId }
+    })
   }
 ]
 

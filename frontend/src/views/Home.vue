@@ -126,44 +126,21 @@
         <!-- 右栏：交互控制台 -->
         <div class="right-panel">
           <div class="console-box">
-            <!-- 上传区域 -->
+            <!-- 文本输入区域 -->
             <div class="console-section">
               <div class="console-header">
                 <span class="console-label">{{ $t('home.realitySeed') }}</span>
-                <span class="console-meta">{{ $t('home.supportedFormats') }}</span>
+                <span class="console-meta">TEXT INPUT</span>
               </div>
-              
-              <div 
-                class="upload-zone"
-                :class="{ 'drag-over': isDragOver, 'has-files': files.length > 0 }"
-                @dragover.prevent="handleDragOver"
-                @dragleave.prevent="handleDragLeave"
-                @drop.prevent="handleDrop"
-                @click="triggerFileInput"
-              >
-                <input
-                  ref="fileInput"
-                  type="file"
-                  multiple
-                  accept=".pdf,.md,.txt"
-                  @change="handleFileSelect"
-                  style="display: none"
+
+              <div class="input-wrapper">
+                <textarea
+                  v-model="formData.sourceText"
+                  class="code-input"
+                  placeholder="Paste source document text here..."
+                  rows="8"
                   :disabled="loading"
-                />
-                
-                <div v-if="files.length === 0" class="upload-placeholder">
-                  <div class="upload-icon">↑</div>
-                  <div class="upload-title">{{ $t('home.dragToUpload') }}</div>
-                  <div class="upload-hint">{{ $t('home.orBrowse') }}</div>
-                </div>
-                
-                <div v-else class="file-list">
-                  <div v-for="(file, index) in files" :key="index" class="file-item">
-                    <span class="file-icon">📄</span>
-                    <span class="file-name">{{ file.name }}</span>
-                    <button @click.stop="removeFile(index)" class="remove-btn">×</button>
-                  </div>
-                </div>
+                ></textarea>
               </div>
             </div>
 
@@ -221,70 +198,18 @@ const router = useRouter()
 
 // 表单数据
 const formData = ref({
+  sourceText: '',
   simulationRequirement: ''
 })
-
-// 文件列表
-const files = ref([])
 
 // 状态
 const loading = ref(false)
 const error = ref('')
-const isDragOver = ref(false)
-
-// 文件输入引用
-const fileInput = ref(null)
 
 // 计算属性:是否可以提交
 const canSubmit = computed(() => {
-  return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
+  return formData.value.simulationRequirement.trim() !== '' && formData.value.sourceText.trim() !== ''
 })
-
-// 触发文件选择
-const triggerFileInput = () => {
-  if (!loading.value) {
-    fileInput.value?.click()
-  }
-}
-
-// 处理文件选择
-const handleFileSelect = (event) => {
-  const selectedFiles = Array.from(event.target.files)
-  addFiles(selectedFiles)
-}
-
-// 处理拖拽相关
-const handleDragOver = (e) => {
-  if (!loading.value) {
-    isDragOver.value = true
-  }
-}
-
-const handleDragLeave = (e) => {
-  isDragOver.value = false
-}
-
-const handleDrop = (e) => {
-  isDragOver.value = false
-  if (loading.value) return
-  
-  const droppedFiles = Array.from(e.dataTransfer.files)
-  addFiles(droppedFiles)
-}
-
-// 添加文件
-const addFiles = (newFiles) => {
-  const validFiles = newFiles.filter(file => {
-    const ext = file.name.split('.').pop().toLowerCase()
-    return ['pdf', 'md', 'txt'].includes(ext)
-  })
-  files.value.push(...validFiles)
-}
-
-// 移除文件
-const removeFile = (index) => {
-  files.value.splice(index, 1)
-}
 
 // 滚动到底部
 const scrollToBottom = () => {
@@ -300,7 +225,7 @@ const startSimulation = () => {
   
   // 存储待上传的数据
   import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
-    setPendingUpload(files.value, formData.value.simulationRequirement)
+    setPendingUpload(formData.value.sourceText, formData.value.simulationRequirement)
     
     // 立即跳转到Process页面（使用特殊标识表示新建项目）
     router.push({

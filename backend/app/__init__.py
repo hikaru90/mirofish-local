@@ -4,6 +4,8 @@ MiroFish Backend - Flask应用工厂
 
 import os
 import warnings
+import time
+import threading
 
 # 抑制 multiprocessing resource_tracker 的警告（来自第三方库如 transformers）
 # 需要在所有其他导入之前设置
@@ -14,6 +16,8 @@ from flask_cors import CORS
 
 from .config import Config
 from .utils.logger import setup_logger, get_logger
+from .services.simulation_manager import SimulationManager
+from .services.report_agent import ReportManager
 
 
 def create_app(config_class=Config):
@@ -47,10 +51,29 @@ def create_app(config_class=Config):
     SimulationRunner.register_cleanup()
     if should_log_startup:
         logger.info("Registered simulation process cleanup hook")
+
+    # 预热 SQLite（开发运行即创建 compute.sqlite3 及核心表）
+    SimulationManager()
+    ReportManager._ensure_reports_dir()
+    if should_log_startup:
+        logger.info("Initialized sqlite stores")
     
     # 请求日志中间件
+    # 全局限流：整个应用所有端点总计 1 请求/秒
+    _global_rate_lock = threading.Lock()
+    _last_request_ts = {'value': 0.0}
+
     @app.before_request
     def log_request():
+        with _global_rate_lock:
+            now = time.monotonic()
+            elapsed = now - _last_request_ts['value']
+            min_interval = 1.0  # 1 request/second globally
+            if elapsed < min_interval:
+                time.sleep(min_interval - elapsed)
+                now = time.monotonic()
+            _last_request_ts['value'] = now
+
         logger = get_logger('mirofish.request')
         logger.debug(f"Request: {request.method} {request.path}")
         if request.content_type and 'json' in request.content_type:

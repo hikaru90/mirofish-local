@@ -289,7 +289,7 @@
     "refreshGraph": "Refresh Graph",
     "graphMemoryRealtime": "GraphRAG short/long-term memory updating in real-time",
     "realtimeUpdating": "Updating in real-time...",
-    "pendingContentHint": "Some content is still processing. Consider refreshing the graph manually later.",
+    "pendingContentHint": "Simulation finished. Refresh the graph to load the latest relationships.",
     "nodeDetails": "Node Details",
     "relationship": "Relationship",
     "graphDataLoading": "Loading graph data...",

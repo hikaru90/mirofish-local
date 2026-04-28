@@ -12,6 +12,8 @@ from . import graph_bp
 from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import GraphBuilderService
+from ..services.simulation_manager import SimulationManager
+from ..services.report_agent import ReportManager
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
@@ -127,10 +129,10 @@ def generate_ontology():
     """
     接口1：上传文件，分析生成本体定义
     
-    请求方式：multipart/form-data
+    请求方式：application/json
     
     参数：
-        files: 上传的文件（PDF/MD/TXT），可多个
+        source_text: 现实种子文本（必填）
         simulation_requirement: 模拟需求描述（必填）
         project_name: 项目名称（可选）
         additional_context: 额外说明（可选）
@@ -152,11 +154,16 @@ def generate_ontology():
     """
     try:
         logger.info("=== Starting ontology generation ===")
+        # Step 1 即初始化 SQLite（确保 compute.sqlite3 存在并已建表）
+        SimulationManager()
+        ReportManager._ensure_reports_dir()
         
         # 获取参数
-        simulation_requirement = request.form.get('simulation_requirement', '')
-        project_name = request.form.get('project_name', 'Unnamed Project')
-        additional_context = request.form.get('additional_context', '')
+        data = request.get_json(silent=True) or {}
+        simulation_requirement = data.get('simulation_requirement', '')
+        source_text = data.get('source_text', '')
+        project_name = data.get('project_name', 'Unnamed Project')
+        additional_context = data.get('additional_context', '')
         
         logger.debug(f"Project name: {project_name}")
         logger.debug(f"Simulation requirement: {simulation_requirement[:100]}...")
@@ -167,12 +174,10 @@ def generate_ontology():
                 "error": t('api.requireSimulationRequirement')
             }), 400
         
-        # 获取上传的文件
-        uploaded_files = request.files.getlist('files')
-        if not uploaded_files or all(not f.filename for f in uploaded_files):
+        if not source_text or not str(source_text).strip():
             return jsonify({
                 "success": False,
-                "error": t('api.requireFileUpload')
+                "error": t('api.noDocProcessed')
             }), 400
         
         # 创建项目
@@ -180,35 +185,14 @@ def generate_ontology():
         project.simulation_requirement = simulation_requirement
         logger.info(f"Created project: {project.project_id}")
         
-        # 保存文件并提取文本
-        document_texts = []
-        all_text = ""
-        
-        for file in uploaded_files:
-            if file and file.filename and allowed_file(file.filename):
-                # 保存文件到项目目录
-                file_info = ProjectManager.save_file_to_project(
-                    project.project_id, 
-                    file, 
-                    file.filename
-                )
-                project.files.append({
-                    "filename": file_info["original_filename"],
-                    "size": file_info["size"]
-                })
-                
-                # 提取文本
-                text = FileParser.extract_text(file_info["path"])
-                text = TextProcessor.preprocess_text(text)
-                document_texts.append(text)
-                all_text += f"\n\n=== {file_info['original_filename']} ===\n{text}"
-        
-        if not document_texts:
-            ProjectManager.delete_project(project.project_id)
-            return jsonify({
-                "success": False,
-                "error": t('api.noDocProcessed')
-            }), 400
+        # 直接使用文本输入
+        text = TextProcessor.preprocess_text(str(source_text))
+        document_texts = [text]
+        all_text = text
+        project.files = [{
+            "filename": "direct_input.txt",
+            "size": len(text.encode('utf-8'))
+        }]
         
         # 保存提取的文本
         project.total_text_length = len(all_text)
@@ -253,12 +237,29 @@ def generate_ontology():
         
     except Exception as e:
         project_id = project.project_id if 'project' in locals() else 'unknown'
-        logger.error(f"Failed to generate ontology: project_id={project_id}, error={str(e)}")
+        error_message = str(e)
+        logger.error(f"Failed to generate ontology: project_id={project_id}, error={error_message}")
         logger.error(traceback.format_exc())
+
+        normalized_error = error_message.lower()
+        is_timeout = (
+            'timeout' in normalized_error
+            or 'timed out' in normalized_error
+            or e.__class__.__name__ in ('APITimeoutError', 'ReadTimeout', 'TimeoutException')
+        )
+
+        if is_timeout:
+            return jsonify({
+                "success": False,
+                "project_id": project_id,
+                "error": "Ontology generation timed out while waiting for the LLM response. Please retry.",
+                "error_type": "llm_timeout"
+            }), 504
+
         return jsonify({
             "success": False,
             "project_id": project_id,
-            "error": str(e),
+            "error": error_message,
             "traceback": traceback.format_exc()
         }), 500
 
@@ -508,6 +509,10 @@ def build_graph():
                     overlap=chunk_overlap
                 )
                 total_chunks = len(chunks)
+                build_logger.info(
+                    f"[{task_id}] Chunking completed: total_chunks={total_chunks}, "
+                    f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}"
+                )
                 project.graph_total_chunks = total_chunks
                 ProjectManager.save_project(project)
 
@@ -542,7 +547,9 @@ def build_graph():
                     )
                     project.graph_build_progress = 10
                     ProjectManager.save_project(project)
+                    build_logger.info(f"[{task_id}] Creating graph: name={graph_name}")
                     graph_id = builder.create_graph(name=graph_name)
+                    build_logger.info(f"[{task_id}] Graph created: graph_id={graph_id}")
                     
                     # 更新项目的graph_id
                     project.graph_id = graph_id
@@ -557,9 +564,12 @@ def build_graph():
                     )
                     project.graph_build_progress = 15
                     ProjectManager.save_project(project)
+                    build_logger.info(f"[{task_id}] Setting ontology...")
                     builder.set_ontology(graph_id, ontology)
+                    build_logger.info(f"[{task_id}] Ontology set successfully")
                 
                 # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
+                last_add_progress_log = {'value': -1}
                 def add_progress_callback(msg, progress_ratio):
                     progress = 15 + int(progress_ratio * 40)  # 15% - 55%
                     remaining_chunks = max(1, total_chunks - resume_from)
@@ -578,6 +588,13 @@ def build_graph():
                     if progress > project.graph_build_progress:
                         project.graph_build_progress = progress
                         ProjectManager.save_project(project)
+                    # 控制台进度日志（每 5% 一次，避免刷屏）
+                    if progress >= last_add_progress_log['value'] + 5:
+                        build_logger.info(
+                            f"[{task_id}] Add chunks progress: {processed_chunks}/{total_chunks} "
+                            f"({progress}%) - {msg}"
+                        )
+                        last_add_progress_log['value'] = progress
                 
                 task_manager.update_task(
                     task_id,
@@ -588,11 +605,18 @@ def build_graph():
                     project.graph_build_progress = 15
                     ProjectManager.save_project(project)
                 
+                build_logger.info(
+                    f"[{task_id}] Sending chunks to backend: "
+                    f"from={resume_from}, count={total_chunks - resume_from}"
+                )
                 episode_uuids = builder.add_text_batches(
                     graph_id, 
                     chunks[resume_from:],
                     batch_size=3,
                     progress_callback=add_progress_callback
+                )
+                build_logger.info(
+                    f"[{task_id}] Chunk upload completed: episodes={len(episode_uuids)}"
                 )
                 project.graph_resume_chunk_index = total_chunks
                 ProjectManager.save_project(project)
@@ -607,6 +631,7 @@ def build_graph():
                     project.graph_build_progress = 55
                     ProjectManager.save_project(project)
                 
+                last_wait_progress_log = {'value': -1}
                 def wait_progress_callback(msg, progress_ratio):
                     progress = 55 + int(progress_ratio * 35)  # 55% - 90%
                     task_manager.update_task(
@@ -617,8 +642,16 @@ def build_graph():
                     if progress > project.graph_build_progress:
                         project.graph_build_progress = progress
                         ProjectManager.save_project(project)
+                    # 控制台进度日志（每 5% 一次）
+                    if progress >= last_wait_progress_log['value'] + 5:
+                        build_logger.info(
+                            f"[{task_id}] Backend processing progress: {progress}% - {msg}"
+                        )
+                        last_wait_progress_log['value'] = progress
                 
+                build_logger.info(f"[{task_id}] Waiting for backend episodes to be processed...")
                 builder._wait_for_episodes(episode_uuids, wait_progress_callback)
+                build_logger.info(f"[{task_id}] Backend episode processing completed")
                 
                 # 获取图谱数据
                 task_manager.update_task(
@@ -629,6 +662,7 @@ def build_graph():
                 if project.graph_build_progress < 95:
                     project.graph_build_progress = 95
                     ProjectManager.save_project(project)
+                build_logger.info(f"[{task_id}] Fetching final graph data...")
                 graph_data = builder.get_graph_data(graph_id)
                 
                 # 更新项目状态

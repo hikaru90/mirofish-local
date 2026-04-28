@@ -419,7 +419,8 @@ const goToSimulation = () => {
   if (selectedProject.value?.simulation_id) {
     router.push({
       name: 'Simulation',
-      params: { simulationId: selectedProject.value.simulation_id }
+      params: { projectId: selectedProject.value.project_id || 'unknown' },
+      query: { simulationId: selectedProject.value.simulation_id }
     })
     closeModal()
   }
@@ -430,7 +431,8 @@ const goToReport = () => {
   if (selectedProject.value?.report_id) {
     router.push({
       name: 'Report',
-      params: { reportId: selectedProject.value.report_id }
+      params: { projectId: selectedProject.value.project_id || 'unknown' },
+      query: { reportId: selectedProject.value.report_id }
     })
     closeModal()
   }

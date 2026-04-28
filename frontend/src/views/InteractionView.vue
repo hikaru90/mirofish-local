@@ -87,7 +87,7 @@ const props = defineProps({
 const viewMode = ref('workbench')
 
 // Data State
-const currentReportId = ref(route.params.reportId)
+const currentReportId = ref(route.query.reportId || route.params.reportId)
 const simulationId = ref(null)
 const projectData = ref(null)
 const graphData = ref(null)
@@ -205,7 +205,7 @@ const refreshGraph = () => {
 }
 
 // Watch route params
-watch(() => route.params.reportId, (newId) => {
+watch(() => route.query.reportId || route.params.reportId, (newId) => {
   if (newId && newId !== currentReportId.value) {
     currentReportId.value = newId
     loadReportData()

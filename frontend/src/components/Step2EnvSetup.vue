@@ -38,6 +38,11 @@
               <span class="info-value mono">{{ taskId || $t('step2.asyncTaskDone') }}</span>
             </div>
           </div>
+          <div class="step-actions">
+            <button class="retry-step-btn" :disabled="isRetryingStep" @click="retryStep(1)">
+              {{ isRetryingStep ? 'Retrying...' : 'Retry Step 1' }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -109,6 +114,11 @@
                 </div>
               </div>
             </div>
+          </div>
+          <div class="step-actions">
+            <button class="retry-step-btn" :disabled="isRetryingStep" @click="retryStep(2)">
+              {{ isRetryingStep ? 'Retrying...' : 'Retry Step 2' }}
+            </button>
           </div>
         </div>
       </div>
@@ -343,6 +353,11 @@
               </div>
             </div>
           </div>
+          <div class="step-actions">
+            <button class="retry-step-btn" :disabled="isRetryingStep" @click="retryStep(3)">
+              {{ isRetryingStep ? 'Retrying...' : 'Retry Step 3' }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -414,6 +429,11 @@
                 </div>
               </div>
             </div>
+          </div>
+          <div class="step-actions">
+            <button class="retry-step-btn" :disabled="isRetryingStep" @click="retryStep(4)">
+              {{ isRetryingStep ? 'Retrying...' : 'Retry Step 4' }}
+            </button>
           </div>
         </div>
       </div>
@@ -522,6 +542,11 @@
               @click="handleStartSimulation"
             >
               {{ $t('step2.startDualWorldSim') }} ➝
+            </button>
+          </div>
+          <div class="step-actions">
+            <button class="retry-step-btn" :disabled="isRetryingStep" @click="retryStep(5)">
+              {{ isRetryingStep ? 'Retrying...' : 'Retry Step 5' }}
             </button>
           </div>
         </div>
@@ -665,6 +690,7 @@ const expectedTotal = ref(null)
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
+const isRetryingStep = ref(false)
 
 // 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
@@ -783,6 +809,14 @@ const startPrepareSimulation = async () => {
   emit('update-status', 'processing')
   
   try {
+    // 先检查已持久化状态，若已准备完成则直接恢复，不触发重算。
+    const statusRes = await getPrepareStatus({ simulation_id: props.simulationId })
+    if (statusRes.success && statusRes.data?.already_prepared) {
+      addLog(t('log.detectedExistingPrep'))
+      await loadPreparedData()
+      return
+    }
+
     const res = await prepareSimulation({
       simulation_id: props.simulationId,
       use_llm_for_profiles: true,
@@ -821,6 +855,60 @@ const startPrepareSimulation = async () => {
   } catch (err) {
     addLog(t('log.prepareException', { error: err.message }))
     emit('update-status', 'error')
+  }
+}
+
+const resetPrepareState = () => {
+  stopPolling()
+  stopProfilesPolling()
+  stopConfigPolling()
+  phase.value = 1
+  taskId.value = null
+  prepareProgress.value = 0
+  currentStage.value = ''
+  progressMessage.value = ''
+  profiles.value = []
+  entityTypes.value = []
+  expectedTotal.value = null
+  simulationConfig.value = null
+  selectedProfile.value = null
+  lastLoggedMessage = ''
+  lastLoggedProfileCount = 0
+  lastLoggedConfigStage = ''
+}
+
+const retryStep = async (stepNumber) => {
+  if (!props.simulationId || isRetryingStep.value) return
+  isRetryingStep.value = true
+  addLog(`Retrying Step ${stepNumber}...`)
+  emit('update-status', 'processing')
+  resetPrepareState()
+
+  try {
+    const res = await prepareSimulation({
+      simulation_id: props.simulationId,
+      use_llm_for_profiles: true,
+      parallel_profile_count: 5,
+      force_regenerate: true
+    })
+
+    if (res.success && res.data) {
+      taskId.value = res.data.task_id
+      if (res.data.expected_entities_count) {
+        expectedTotal.value = res.data.expected_entities_count
+      }
+      addLog(`Retry task started: ${taskId.value}`)
+      startPolling()
+      startProfilesPolling()
+    } else {
+      addLog(`Retry failed: ${res.error || t('common.unknownError')}`)
+      emit('update-status', 'error')
+    }
+  } catch (err) {
+    addLog(`Retry exception: ${err.message}`)
+    emit('update-status', 'error')
+  } finally {
+    isRetryingStep.value = false
   }
 }
 
@@ -901,6 +989,8 @@ const pollPrepareStatus = async () => {
         addLog(t('log.prepareFailedWithError', { error: data.error || t('common.unknownError') }))
         stopPolling()
         stopProfilesPolling()
+        stopConfigPolling()
+        emit('update-status', 'error')
       }
     }
   } catch (err) {
@@ -1233,6 +1323,32 @@ onUnmounted(() => {
 
 .action-group.dual .action-btn {
   width: 100%;
+}
+
+.step-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.retry-step-btn {
+  padding: 8px 12px;
+  border: 1px solid #d8d8d8;
+  background: #fff;
+  color: #333;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.retry-step-btn:hover:not(:disabled) {
+  border-color: #999;
+}
+
+.retry-step-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Info Card */

@@ -568,8 +568,8 @@ const initProject = async () => {
 const handleNewProject = async () => {
   const pending = getPendingUpload()
   
-  if (!pending.isPending || pending.files.length === 0) {
-    error.value = '没有待上传的文件，请返回首页重新操作'
+  if (!pending.isPending || !pending.sourceText?.trim()) {
+    error.value = '没有待提交的文本，请返回首页重新操作'
     loading.value = false
     return
   }
@@ -579,15 +579,14 @@ const handleNewProject = async () => {
     currentPhase.value = 0 // 本体生成阶段
     ontologyProgress.value = { message: '正在上传文件并分析文档...' }
     
-    // 构建 FormData
-    const formDataObj = new FormData()
-    pending.files.forEach(file => {
-      formDataObj.append('files', file)
-    })
-    formDataObj.append('simulation_requirement', pending.simulationRequirement)
+    // 构建请求体
+    const payload = {
+      source_text: pending.sourceText,
+      simulation_requirement: pending.simulationRequirement
+    }
     
     // 调用本体生成 API
-    const response = await generateOntology(formDataObj)
+    const response = await generateOntology(payload)
     
     if (response.success) {
       // 清除待上传数据

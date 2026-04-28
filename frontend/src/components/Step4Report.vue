@@ -396,7 +396,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog } from '../api/report'
+import { getAgentLog, getConsoleLog, getReport, getReportSections, getReportProgress, generateReport } from '../api/report'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -412,7 +412,8 @@ const emit = defineEmits(['add-log', 'update-status'])
 // Navigation
 const goToInteraction = () => {
   if (props.reportId) {
-    router.push({ name: 'Interaction', params: { reportId: props.reportId } })
+    const projectId = router.currentRoute.value.params.projectId || 'unknown'
+    router.push({ name: 'Interaction', params: { projectId }, query: { reportId: props.reportId } })
   }
 }
 
@@ -2047,6 +2048,81 @@ const checkPollingIdleTimeout = () => {
   return false
 }
 
+const hydrateFromPersistedState = async () => {
+  if (!props.reportId) return
+
+  // 1) Load report metadata (outline/status) from persisted backend state.
+  try {
+    const reportRes = await getReport(props.reportId)
+    if (reportRes?.success && reportRes.data) {
+      const data = reportRes.data
+      if (data.outline) {
+        reportOutline.value = data.outline
+      }
+      if (data.status === 'completed') {
+        isComplete.value = true
+        isFailed.value = false
+        currentSectionIndex.value = null
+        emit('update-status', 'completed')
+      } else if (data.status === 'failed') {
+        isFailed.value = true
+        emit('update-status', 'failed')
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to hydrate report metadata:', err)
+  }
+
+  // 2) Load already generated sections so completed content appears after refresh.
+  try {
+    const sectionsRes = await getReportSections(props.reportId)
+    if (sectionsRes?.success && sectionsRes.data?.sections) {
+      const persisted = {}
+      sectionsRes.data.sections.forEach(section => {
+        if (section?.section_index) {
+          persisted[section.section_index] = section.content || ''
+        }
+      })
+      generatedSections.value = persisted
+      if (sectionsRes.data.is_complete) {
+        isComplete.value = true
+        isFailed.value = false
+        currentSectionIndex.value = null
+        emit('update-status', 'completed')
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to hydrate report sections:', err)
+  }
+
+  // 3) Load progress snapshot to restore current section pointer on reload.
+  try {
+    const progressRes = await getReportProgress(props.reportId)
+    if (progressRes?.success && progressRes.data) {
+      const progress = progressRes.data
+      const currentSectionTitle = progress.current_section
+      if (currentSectionTitle && reportOutline.value?.sections?.length) {
+        const idx = reportOutline.value.sections.findIndex(s => s.title === currentSectionTitle)
+        if (idx >= 0) {
+          currentSectionIndex.value = idx + 1
+        }
+      }
+      if (progress.status === 'failed') {
+        isFailed.value = true
+        emit('update-status', 'failed')
+      }
+      if (progress.status === 'completed') {
+        isComplete.value = true
+        isFailed.value = false
+        currentSectionIndex.value = null
+        emit('update-status', 'completed')
+      }
+    }
+  } catch (err) {
+    // Optional endpoint during startup; safe to ignore.
+  }
+}
+
 const fetchAgentLog = async () => {
   if (!props.reportId) return
   if (checkPollingIdleTimeout()) return
@@ -2225,9 +2301,30 @@ const stopPolling = () => {
   }
 }
 
-const retryPolling = () => {
-  addLog('Retrying report polling...')
+const retryPolling = async () => {
+  addLog('Retrying report step...')
   emit('update-status', 'processing')
+
+  // Explicit retry action: recompute only when user presses retry.
+  if (props.simulationId) {
+    try {
+      const res = await generateReport({
+        simulation_id: props.simulationId,
+        force_regenerate: true
+      })
+      if (res?.success && res?.data?.report_id) {
+        const nextReportId = res.data.report_id
+        if (nextReportId !== props.reportId) {
+          const projectId = router.currentRoute.value.params.projectId || 'unknown'
+          router.push({ name: 'Report', params: { projectId }, query: { reportId: nextReportId } })
+          return
+        }
+      }
+    } catch (err) {
+      console.warn('Retry generation failed, fallback to polling:', err)
+    }
+  }
+
   startPolling()
 }
 
@@ -2235,7 +2332,7 @@ const retryPolling = () => {
 onMounted(() => {
   if (props.reportId) {
     addLog(`Report Agent initialized: ${props.reportId}`)
-    startPolling()
+    hydrateFromPersistedState().finally(() => startPolling())
   }
 })
 
@@ -2259,7 +2356,7 @@ watch(() => props.reportId, (newId) => {
     isFailed.value = false
     startTime.value = null
     
-    startPolling()
+    hydrateFromPersistedState().finally(() => startPolling())
   }
 }, { immediate: true })
 </script>

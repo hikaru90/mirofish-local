@@ -357,7 +357,7 @@ class SimulationRunner:
             original_rounds = total_rounds
             total_rounds = min(total_rounds, max_rounds)
             if total_rounds < original_rounds:
-                logger.info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+                logger.info(f"Rounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
         
         state = SimulationRunState(
             simulation_id=simulation_id,
@@ -468,7 +468,7 @@ class SimulationRunner:
             monitor_thread.start()
             cls._monitor_threads[simulation_id] = monitor_thread
             
-            logger.info(f"模拟启动成功: {simulation_id}, pid={process.pid}, platform={platform}")
+            logger.info(f"Simulation started successfully: {simulation_id}, pid={process.pid}, platform={platform}")
             
         except Exception as e:
             state.runner_status = RunnerStatus.FAILED
@@ -527,7 +527,7 @@ class SimulationRunner:
             if exit_code == 0:
                 state.runner_status = RunnerStatus.COMPLETED
                 state.completed_at = datetime.now().isoformat()
-                logger.info(f"模拟完成: {simulation_id}")
+                logger.info(f"Simulation completed: {simulation_id}")
             else:
                 state.runner_status = RunnerStatus.FAILED
                 # 从主日志文件读取错误信息
@@ -540,7 +540,7 @@ class SimulationRunner:
                 except Exception:
                     pass
                 state.error = f"进程退出码: {exit_code}, 错误: {error_info}"
-                logger.error(f"模拟失败: {simulation_id}, error={state.error}")
+                logger.error(f"Simulation failed: {simulation_id}, error={state.error}")
             
             state.twitter_running = False
             state.reddit_running = False
@@ -624,11 +624,11 @@ class SimulationRunner:
                                     if platform == "twitter":
                                         state.twitter_completed = True
                                         state.twitter_running = False
-                                        logger.info(f"Twitter 模拟已完成: {state.simulation_id}, total_rounds={action_data.get('total_rounds')}, total_actions={action_data.get('total_actions')}")
+                                        logger.info(f"Twitter simulation completed: {state.simulation_id}, total_rounds={action_data.get('total_rounds')}, total_actions={action_data.get('total_actions')}")
                                     elif platform == "reddit":
                                         state.reddit_completed = True
                                         state.reddit_running = False
-                                        logger.info(f"Reddit 模拟已完成: {state.simulation_id}, total_rounds={action_data.get('total_rounds')}, total_actions={action_data.get('total_actions')}")
+                                        logger.info(f"Reddit simulation completed: {state.simulation_id}, total_rounds={action_data.get('total_rounds')}, total_actions={action_data.get('total_actions')}")
                                     
                                     # 检查是否所有启用的平台都已完成
                                     # 如果只运行了一个平台，只检查那个平台
@@ -637,7 +637,7 @@ class SimulationRunner:
                                     if all_completed:
                                         state.runner_status = RunnerStatus.COMPLETED
                                         state.completed_at = datetime.now().isoformat()
-                                        logger.info(f"所有平台模拟已完成: {state.simulation_id}")
+                                        logger.info(f"All platform simulations completed: {state.simulation_id}")
                                 
                                 # 更新轮次信息（从 round_end 事件）
                                 elif event_type == "round_end":

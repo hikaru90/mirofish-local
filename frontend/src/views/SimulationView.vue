@@ -71,7 +71,7 @@ import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { getProject, getGraphData } from '../api/graph'
-import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
+import { getSimulation } from '../api/simulation'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -88,7 +88,8 @@ const props = defineProps({
 const viewMode = ref('split')
 
 // Data State
-const currentSimulationId = ref(route.params.simulationId)
+const currentProjectId = ref(route.params.projectId || '')
+const currentSimulationId = ref(route.query.simulationId || '')
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
@@ -163,12 +164,13 @@ const handleNextStep = (params = {}) => {
   // 构建路由参数
   const routeParams = {
     name: 'SimulationRun',
-    params: { simulationId: currentSimulationId.value }
+    params: { projectId: currentProjectId.value || projectData.value?.project_id || 'unknown' },
+    query: { simulationId: currentSimulationId.value }
   }
   
   // 如果有自定义轮数，通过 query 参数传递
   if (params.maxRounds) {
-    routeParams.query = { maxRounds: params.maxRounds }
+    routeParams.query.maxRounds = params.maxRounds
   }
   
   // 跳转到 Step 3 页面
@@ -176,69 +178,6 @@ const handleNextStep = (params = {}) => {
 }
 
 // --- Data Logic ---
-
-/**
- * 检查并关闭正在运行的模拟
- * 当用户从 Step 3 返回到 Step 2 时，默认用户要退出模拟
- */
-const checkAndStopRunningSimulation = async () => {
-  if (!currentSimulationId.value) return
-  
-  try {
-    // 先检查模拟环境是否存活
-    const envStatusRes = await getEnvStatus({ simulation_id: currentSimulationId.value })
-    
-    if (envStatusRes.success && envStatusRes.data?.env_alive) {
-      addLog(t('log.detectedSimEnvRunning'))
-      
-      // 尝试优雅关闭模拟环境
-      try {
-        const closeRes = await closeSimulationEnv({ 
-          simulation_id: currentSimulationId.value,
-          timeout: 10  // 10秒超时
-        })
-        
-        if (closeRes.success) {
-          addLog(t('log.simEnvClosed'))
-        } else {
-          addLog(t('log.closeSimEnvFailedWithError', { error: closeRes.error || t('common.unknownError') }))
-          // 如果优雅关闭失败，尝试强制停止
-          await forceStopSimulation()
-        }
-      } catch (closeErr) {
-        addLog(t('log.closeSimEnvException', { error: closeErr.message }))
-        // 如果优雅关闭异常，尝试强制停止
-        await forceStopSimulation()
-      }
-    } else {
-      // 环境未运行，但可能进程还在，检查模拟状态
-      const simRes = await getSimulation(currentSimulationId.value)
-      if (simRes.success && simRes.data?.status === 'running') {
-        addLog(t('log.detectedSimRunning'))
-        await forceStopSimulation()
-      }
-    }
-  } catch (err) {
-    // 检查环境状态失败不影响后续流程
-    console.warn('检查模拟状态失败:', err)
-  }
-}
-
-/**
- * 强制停止模拟
- */
-const forceStopSimulation = async () => {
-  try {
-    const stopRes = await stopSimulation({ simulation_id: currentSimulationId.value })
-    if (stopRes.success) {
-      addLog(t('log.simForceStopSuccess'))
-    } else {
-      addLog(t('log.forceStopSimFailed', { error: stopRes.error || t('common.unknownError') }))
-    }
-  } catch (err) {
-    addLog(t('log.forceStopSimException', { error: err.message }))
-  }
-}
 
 const loadSimulationData = async () => {
   try {
@@ -293,10 +232,7 @@ const refreshGraph = () => {
 
 onMounted(async () => {
   addLog(t('log.simViewInit'))
-  
-  // 检查并关闭正在运行的模拟（用户从 Step 3 返回时）
-  await checkAndStopRunningSimulation()
-  
+
   // 加载模拟数据
   loadSimulationData()
 })

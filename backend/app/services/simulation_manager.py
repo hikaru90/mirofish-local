@@ -7,6 +7,7 @@ OASIS模拟管理器
 import os
 import json
 import shutil
+import sqlite3
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -132,9 +133,29 @@ class SimulationManager:
     def __init__(self):
         # 确保目录存在
         os.makedirs(self.SIMULATION_DATA_DIR, exist_ok=True)
+        self._db_path = os.path.join(Config.UPLOAD_FOLDER, "compute.sqlite3")
+        self._init_db()
         
         # 内存中的模拟状态缓存
         self._simulations: Dict[str, SimulationState] = {}
+
+    def _init_db(self):
+        """Initialize sqlite tables for simulation state."""
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simulations (
+                    simulation_id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_simulations_updated_at ON simulations(updated_at DESC)"
+            )
+            conn.commit()
     
     def _get_simulation_dir(self, simulation_id: str) -> str:
         """获取模拟数据目录"""
@@ -143,30 +164,54 @@ class SimulationManager:
         return sim_dir
     
     def _save_simulation_state(self, state: SimulationState):
-        """保存模拟状态到文件"""
+        """保存模拟状态到sqlite（并保留文件兼容）"""
         sim_dir = self._get_simulation_dir(state.simulation_id)
         state_file = os.path.join(sim_dir, "state.json")
         
         state.updated_at = datetime.now().isoformat()
+        state_dict = state.to_dict()
         
+        # Primary storage: sqlite
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO simulations (simulation_id, state_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(simulation_id) DO UPDATE SET
+                    state_json = excluded.state_json,
+                    updated_at = excluded.updated_at
+                """,
+                (state.simulation_id, json.dumps(state_dict, ensure_ascii=False), state.updated_at),
+            )
+            conn.commit()
+
+        # Compatibility storage: existing state.json
         with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+            json.dump(state_dict, f, ensure_ascii=False, indent=2)
         
         self._simulations[state.simulation_id] = state
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
-        """从文件加载模拟状态"""
+        """从sqlite加载模拟状态（不存在时回退文件并回填sqlite）"""
         if simulation_id in self._simulations:
             return self._simulations[simulation_id]
-        
-        sim_dir = self._get_simulation_dir(simulation_id)
-        state_file = os.path.join(sim_dir, "state.json")
-        
-        if not os.path.exists(state_file):
-            return None
-        
-        with open(state_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+
+        data = None
+        with sqlite3.connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT state_json FROM simulations WHERE simulation_id = ?",
+                (simulation_id,),
+            ).fetchone()
+            if row and row[0]:
+                data = json.loads(row[0])
+
+        if data is None:
+            sim_dir = self._get_simulation_dir(simulation_id)
+            state_file = os.path.join(sim_dir, "state.json")
+            if not os.path.exists(state_file):
+                return None
+            with open(state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
         
         state = SimulationState(
             simulation_id=simulation_id,
@@ -189,6 +234,8 @@ class SimulationManager:
         )
         
         self._simulations[simulation_id] = state
+        # Backfill sqlite if loaded from file.
+        self._save_simulation_state(state)
         return state
     
     def create_simulation(
@@ -463,19 +510,27 @@ class SimulationManager:
     def list_simulations(self, project_id: Optional[str] = None) -> List[SimulationState]:
         """列出所有模拟"""
         simulations = []
-        
-        if os.path.exists(self.SIMULATION_DATA_DIR):
+
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(
+                "SELECT simulation_id FROM simulations ORDER BY updated_at DESC"
+            ).fetchall()
+
+        for (sim_id,) in rows:
+            state = self._load_simulation_state(sim_id)
+            if state and (project_id is None or state.project_id == project_id):
+                simulations.append(state)
+
+        # Fallback scan for any legacy file-only records not in sqlite.
+        if not simulations and os.path.exists(self.SIMULATION_DATA_DIR):
             for sim_id in os.listdir(self.SIMULATION_DATA_DIR):
-                # 跳过隐藏文件（如 .DS_Store）和非目录文件
                 sim_path = os.path.join(self.SIMULATION_DATA_DIR, sim_id)
                 if sim_id.startswith('.') or not os.path.isdir(sim_path):
                     continue
-                
                 state = self._load_simulation_state(sim_id)
-                if state:
-                    if project_id is None or state.project_id == project_id:
-                        simulations.append(state)
-        
+                if state and (project_id is None or state.project_id == project_id):
+                    simulations.append(state)
+
         return simulations
     
     def get_profiles(self, simulation_id: str, platform: str = "reddit") -> List[Dict[str, Any]]:

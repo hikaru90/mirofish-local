@@ -91,7 +91,8 @@ const props = defineProps({
 const viewMode = ref('split')
 
 // Data State
-const currentSimulationId = ref(route.params.simulationId)
+const currentProjectId = ref(route.params.projectId || '')
+const currentSimulationId = ref(route.query.simulationId || '')
 // 直接在初始化时从 query 参数获取 maxRounds，确保子组件能立即获取到值
 const maxRounds = ref(route.query.maxRounds ? parseInt(route.query.maxRounds) : null)
 const minutesPerRound = ref(30) // 默认每轮30分钟
@@ -194,7 +195,11 @@ const handleGoBack = async () => {
   }
   
   // 返回到 Step 2 (环境搭建)
-  router.push({ name: 'Simulation', params: { simulationId: currentSimulationId.value } })
+  router.push({
+    name: 'Simulation',
+    params: { projectId: currentProjectId.value || projectData.value?.project_id || 'unknown' },
+    query: { simulationId: currentSimulationId.value }
+  })
 }
 
 const handleNextStep = () => {

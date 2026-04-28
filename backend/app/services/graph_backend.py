@@ -12,7 +12,7 @@ import uuid
 import warnings
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, get_origin
 
 from pydantic import Field
 
@@ -382,8 +382,36 @@ class GraphitiBackend(GraphBackend):
                     raise ValueError("Empty response content from LLM")
                 data = json.loads(content)
                 if response_model is not None:
-                    validated = response_model.model_validate(data)
-                    return validated.model_dump()
+                    try:
+                        validated = response_model.model_validate(data)
+                        return validated.model_dump()
+                    except Exception:
+                        # Some providers occasionally omit required primitive fields
+                        # (e.g. "summary"). Try a conservative repair for missing keys.
+                        if isinstance(data, dict):
+                            repaired_data = dict(data)
+                            for field_name, field_info in response_model.model_fields.items():
+                                if field_name in repaired_data or not field_info.is_required():
+                                    continue
+                                annotation = field_info.annotation
+                                origin = get_origin(annotation)
+                                if annotation is str:
+                                    repaired_data[field_name] = ""
+                                elif annotation is int:
+                                    repaired_data[field_name] = 0
+                                elif annotation is float:
+                                    repaired_data[field_name] = 0.0
+                                elif annotation is bool:
+                                    repaired_data[field_name] = False
+                                elif origin in (list, List):
+                                    repaired_data[field_name] = []
+                                elif origin in (dict, Dict):
+                                    repaired_data[field_name] = {}
+                                else:
+                                    repaired_data[field_name] = None
+                            validated = response_model.model_validate(repaired_data)
+                            return validated.model_dump()
+                        raise
                 return data
 
         # 使用现有 LLM 配置驱动 Graphiti 默认 OpenAI 客户端

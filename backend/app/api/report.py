@@ -20,6 +20,19 @@ from ..utils.locale import t, get_locale, set_locale
 logger = get_logger('mirofish.api.report')
 
 
+def _find_active_report_task_id(simulation_id: str) -> str:
+    """Find latest active report_generate task for a simulation."""
+    task_manager = TaskManager()
+    tasks = task_manager.list_tasks(task_type="report_generate")
+    for task in tasks:
+        metadata = task.get("metadata", {}) or {}
+        if metadata.get("simulation_id") != simulation_id:
+            continue
+        if task.get("status") in {TaskStatus.PENDING.value, TaskStatus.PROCESSING.value}:
+            return task.get("task_id")
+    return ""
+
+
 # ============== 报告生成接口 ==============
 
 @report_bp.route('/generate', methods=['POST'])
@@ -72,17 +85,37 @@ def generate_report():
         # 检查是否已有报告
         if not force_regenerate:
             existing_report = ReportManager.get_report_by_simulation(simulation_id)
-            if existing_report and existing_report.status == ReportStatus.COMPLETED:
-                return jsonify({
-                    "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "report_id": existing_report.report_id,
-                        "status": "completed",
-                        "message": t('api.reportAlreadyExists'),
-                        "already_generated": True
-                    }
-                })
+            if existing_report:
+                # Reuse completed report directly.
+                if existing_report.status == ReportStatus.COMPLETED:
+                    return jsonify({
+                        "success": True,
+                        "data": {
+                            "simulation_id": simulation_id,
+                            "report_id": existing_report.report_id,
+                            "status": "completed",
+                            "message": t('api.reportAlreadyExists'),
+                            "already_generated": True
+                        }
+                    })
+
+                # Reuse in-progress report and avoid starting duplicate generation.
+                if existing_report.status in {ReportStatus.PENDING, ReportStatus.PLANNING, ReportStatus.GENERATING}:
+                    progress = ReportManager.get_progress(existing_report.report_id) or {}
+                    active_task_id = _find_active_report_task_id(simulation_id)
+                    return jsonify({
+                        "success": True,
+                        "data": {
+                            "simulation_id": simulation_id,
+                            "report_id": existing_report.report_id,
+                            "task_id": active_task_id or None,
+                            "status": existing_report.status.value,
+                            "message": "Report generation already in progress, reusing existing state",
+                            "already_generated": True,
+                            "already_in_progress": True,
+                            "progress": progress
+                        }
+                    })
         
         # 获取项目信息
         project = ProjectManager.get_project(state.project_id)
@@ -172,7 +205,7 @@ def generate_report():
                     task_manager.fail_task(task_id, report.error or t('api.reportGenerateFailed'))
                 
             except Exception as e:
-                logger.error(f"报告生成失败: {str(e)}")
+                logger.error(f"Report generation failed: {str(e)}")
                 task_manager.fail_task(task_id, str(e))
         
         # 启动后台线程
@@ -192,7 +225,7 @@ def generate_report():
         })
         
     except Exception as e:
-        logger.error(f"启动报告生成任务失败: {str(e)}")
+        logger.error(f"Failed to start report generation task: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e),
