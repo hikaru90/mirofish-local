@@ -29,7 +29,9 @@ class LLMClient:
         
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=30.0,
+            max_retries=0
         )
     
     def chat(
@@ -90,6 +92,9 @@ class LLMClient:
             max_tokens=max_tokens,
             response_format={"type": "json_object"}
         )
+        if not response:
+            raise ValueError("LLM返回为空，无法解析JSON")
+
         # 清理markdown代码块标记
         cleaned_response = response.strip()
         cleaned_response = re.sub(r'^```(?:json)?\s*\n?', '', cleaned_response, flags=re.IGNORECASE)
@@ -99,5 +104,14 @@ class LLMClient:
         try:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
+            # 兜底：有些模型会在JSON前后附带说明文本，尝试提取首个JSON对象
+            start = cleaned_response.find("{")
+            end = cleaned_response.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                candidate = cleaned_response[start:end + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    pass
             raise ValueError(f"LLM返回的JSON格式无效: {cleaned_response}")
 

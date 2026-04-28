@@ -612,8 +612,17 @@ const handleNewProject = async () => {
     }
   } catch (err) {
     console.error('Handle new project error:', err)
-    error.value = '项目初始化失败: ' + (err.message || '未知错误')
+    ontologyProgress.value = null
+    const message = err?.message || ''
+    if (message.includes('timeout')) {
+      error.value = '项目初始化失败: 本体生成超时，请重试或更换 LLM 提供商'
+    } else if (message.includes('Network Error')) {
+      error.value = '项目初始化失败: 无法连接后端服务，请检查后端状态'
+    } else {
+      error.value = '项目初始化失败: ' + (message || '未知错误')
+    }
   } finally {
+    ontologyProgress.value = null
     loading.value = false
   }
 }

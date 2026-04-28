@@ -20,6 +20,7 @@ from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
 from ..utils.locale import get_locale, t
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
+from .graph_backend import get_graph_backend
 
 logger = get_logger('mirofish.zep_tools')
 
@@ -423,11 +424,14 @@ class ZepToolsService:
     RETRY_DELAY = 2.0
     
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
+        self.use_graph_backend = Config.GRAPH_BACKEND == 'graphiti'
+        self.backend = get_graph_backend()
         self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+        self.client = None
+        if not self.use_graph_backend:
+            if not self.api_key:
+                raise ValueError("ZEP_API_KEY 未配置")
+            self.client = Zep(api_key=self.api_key)
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
         logger.info(t("console.zepToolsInitialized"))
@@ -459,7 +463,9 @@ class ZepToolsService:
                 else:
                     logger.error(t("console.zepAllRetriesFailed", operation=operation_name, retries=max_retries, error=str(e)))
         
-        raise last_exception
+        # Wrap final failure with operation context so upper layers show
+        # the exact Zep call that failed (e.g. graph.search, get node list).
+        raise RuntimeError(f"Zep operation failed [{operation_name}]: {str(last_exception)}") from last_exception
     
     def search_graph(
         self, 
@@ -484,6 +490,16 @@ class ZepToolsService:
             SearchResult: 搜索结果
         """
         logger.info(t("console.graphSearch", graphId=graph_id, query=query[:50]))
+        
+        if self.use_graph_backend:
+            search_result = self.backend.search_graph(graph_id=graph_id, query=query, limit=limit)
+            return SearchResult(
+                facts=search_result.get("facts", []),
+                edges=search_result.get("edges", []),
+                nodes=search_result.get("nodes", []),
+                query=query,
+                total_count=len(search_result.get("facts", []))
+            )
         
         # 尝试使用Zep Cloud Search API
         try:
@@ -659,6 +675,20 @@ class ZepToolsService:
         """
         logger.info(t("console.fetchingAllNodes", graphId=graph_id))
 
+        if self.use_graph_backend:
+            nodes = self.backend.get_all_nodes(graph_id)
+            result = []
+            for node in nodes:
+                result.append(NodeInfo(
+                    uuid=str(node.get("uuid", "")),
+                    name=node.get("name", "") or "",
+                    labels=node.get("labels", []) or [],
+                    summary=node.get("summary", "") or "",
+                    attributes=node.get("attributes", {}) or {}
+                ))
+            logger.info(t("console.fetchedNodes", count=len(result)))
+            return result
+
         nodes = fetch_all_nodes(self.client, graph_id)
 
         result = []
@@ -687,6 +717,24 @@ class ZepToolsService:
             边列表（包含created_at, valid_at, invalid_at, expired_at）
         """
         logger.info(t("console.fetchingAllEdges", graphId=graph_id))
+
+        if self.use_graph_backend:
+            edges = self.backend.get_all_edges(graph_id)
+            result = []
+            for edge in edges:
+                result.append(EdgeInfo(
+                    uuid=str(edge.get("uuid", "")),
+                    name=edge.get("name", "") or "",
+                    fact=edge.get("fact", "") or "",
+                    source_node_uuid=edge.get("source_node_uuid", "") or "",
+                    target_node_uuid=edge.get("target_node_uuid", "") or "",
+                    created_at=edge.get("created_at"),
+                    valid_at=edge.get("valid_at"),
+                    invalid_at=edge.get("invalid_at"),
+                    expired_at=edge.get("expired_at")
+                ))
+            logger.info(t("console.fetchedEdges", count=len(result)))
+            return result
 
         edges = fetch_all_edges(self.client, graph_id)
 
@@ -726,6 +774,18 @@ class ZepToolsService:
         logger.info(t("console.fetchingNodeDetail", uuid=node_uuid[:8]))
         
         try:
+            if self.use_graph_backend:
+                node_data = self.backend.get_node_detail(node_uuid)
+                if not node_data:
+                    return None
+                return NodeInfo(
+                    uuid=node_data.get("uuid", ""),
+                    name=node_data.get("name", ""),
+                    labels=node_data.get("labels", []),
+                    summary=node_data.get("summary", ""),
+                    attributes=node_data.get("attributes", {})
+                )
+
             node = self._call_with_retry(
                 func=lambda: self.client.graph.node.get(uuid_=node_uuid),
                 operation_name=t("console.fetchNodeDetailOp", uuid=node_uuid[:8])
@@ -761,6 +821,23 @@ class ZepToolsService:
         logger.info(t("console.fetchingNodeEdges", uuid=node_uuid[:8]))
         
         try:
+            if self.use_graph_backend:
+                raw_edges = self.backend.get_node_edges(graph_id, node_uuid)
+                return [
+                    EdgeInfo(
+                        uuid=edge.get("uuid", ""),
+                        name=edge.get("name", ""),
+                        fact=edge.get("fact", ""),
+                        source_node_uuid=edge.get("source_node_uuid", ""),
+                        target_node_uuid=edge.get("target_node_uuid", ""),
+                        created_at=edge.get("created_at"),
+                        valid_at=edge.get("valid_at"),
+                        invalid_at=edge.get("invalid_at"),
+                        expired_at=edge.get("expired_at")
+                    )
+                    for edge in raw_edges
+                ]
+
             # 获取图谱所有边，然后过滤
             all_edges = self.get_all_edges(graph_id)
             

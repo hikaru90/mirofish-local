@@ -6,6 +6,8 @@
     "setup": "npm install && cd frontend && npm install",
     "setup:backend": "cd backend && uv sync",
     "setup:all": "npm run setup && npm run setup:backend",
+    "docker:build": "docker build -f Dockerfile.neo4j -t mirofish-neo4j .",
+    "docker:run": "docker run --name mirofish-neo4j -p 7474:7474 -p 7687:7687 -d mirofish-neo4j",
     "dev": "concurrently --kill-others -n \"backend,frontend\" -c \"green,cyan\" \"npm run backend\" \"npm run frontend\"",
     "backend": "cd backend && uv run python run.py",
     "frontend": "cd frontend && npm run dev",

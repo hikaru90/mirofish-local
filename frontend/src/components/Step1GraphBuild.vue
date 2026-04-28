@@ -114,7 +114,7 @@
           </div>
           <div class="step-status">
             <span v-if="currentPhase > 1" class="badge success">{{ $t('step1.ontologyCompleted') }}</span>
-            <span v-else-if="currentPhase === 1" class="badge processing">{{ buildProgress?.progress || 0 }}%</span>
+            <span v-else-if="currentPhase === 1" class="badge processing">{{ displayedBuildProgress }}%</span>
             <span v-else class="badge pending">{{ $t('step1.ontologyPending') }}</span>
           </div>
         </div>
@@ -124,6 +124,32 @@
           <p class="description">
             {{ $t('step1.graphRagDesc') }}
           </p>
+
+          <div v-if="error" class="retry-panel">
+            <div class="retry-error">Build failed: {{ error }}</div>
+            <div class="retry-actions">
+              <button class="retry-btn" @click="emit('retry-step', 'graph')">
+                {{ canResumeBuild ? 'Resume Graph Build' : 'Retry Graph Build' }}
+              </button>
+              <button class="dismiss-btn" @click="emit('clear-error')">
+                Dismiss Last Error
+              </button>
+            </div>
+          </div>
+
+          <div v-else-if="canResumeBuild || hasPartialGraphData" class="resume-panel">
+            <div class="resume-hint">
+              <template v-if="canResumeBuild">
+                Partial graph exists ({{ resumeChunkIndex }}/{{ totalChunkCount }} chunks). You can resume from last checkpoint.
+              </template>
+              <template v-else>
+                Partial graph exists. You can resume/continue graph build from current state.
+              </template>
+            </div>
+            <button class="retry-btn" @click="emit('retry-step', 'graph')">
+              Resume Graph Build
+            </button>
+          </div>
           
           <!-- Stats Cards -->
           <div class="stats-grid">
@@ -201,10 +227,11 @@ const props = defineProps({
   ontologyProgress: Object,
   buildProgress: Object,
   graphData: Object,
+  error: { type: String, default: '' },
   systemLogs: { type: Array, default: () => [] }
 })
 
-defineEmits(['next-step'])
+const emit = defineEmits(['next-step', 'retry-step', 'clear-error'])
 
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
@@ -254,6 +281,31 @@ const graphStats = computed(() => {
   const edges = props.graphData?.edge_count || props.graphData?.edges?.length || 0
   const types = props.projectData?.ontology?.entity_types?.length || 0
   return { nodes, edges, types }
+})
+
+const resumeChunkIndex = computed(() => Number(props.projectData?.graph_resume_chunk_index || 0))
+const totalChunkCount = computed(() => Number(props.projectData?.graph_total_chunks || 0))
+
+const canResumeBuild = computed(() => {
+  return resumeChunkIndex.value > 0 && totalChunkCount.value > 0 && resumeChunkIndex.value < totalChunkCount.value
+})
+
+const hasPartialGraphData = computed(() => {
+  return props.projectData?.status === 'failed' && graphStats.value.nodes > 0
+})
+
+const displayedBuildProgress = computed(() => {
+  const liveProgress = Number(props.buildProgress?.progress || 0)
+  if (liveProgress > 0) return liveProgress
+  const persistedProgress = Number(props.projectData?.graph_build_progress || 0)
+  if (persistedProgress > 0) return persistedProgress
+  if (canResumeBuild.value) {
+    return Math.max(1, Math.min(99, Math.floor((resumeChunkIndex.value / totalChunkCount.value) * 100)))
+  }
+  if (hasPartialGraphData.value) {
+    return 1
+  }
+  return 0
 })
 
 const formatDate = (dateStr) => {
@@ -349,6 +401,72 @@ watch(() => props.systemLogs.length, () => {
 .badge.processing { background: #FF5722; color: #FFF; }
 .badge.accent { background: #FF5722; color: #FFF; }
 .badge.pending { background: #F5F5F5; color: #999; }
+
+.retry-panel {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #F5C6CB;
+  background: #FFF5F5;
+  border-radius: 6px;
+}
+
+.resume-panel {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #FED7AA;
+  background: #FFF7ED;
+  border-radius: 6px;
+}
+
+.retry-error {
+  font-size: 11px;
+  color: #B71C1C;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.resume-hint {
+  font-size: 11px;
+  color: #9A3412;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.retry-btn {
+  border: none;
+  background: #B71C1C;
+  color: #FFF;
+  font-size: 11px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.retry-btn:hover {
+  opacity: 0.9;
+}
+
+.retry-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dismiss-btn {
+  border: 1px solid #D1D5DB;
+  background: #FFF;
+  color: #374151;
+  font-size: 11px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.dismiss-btn:hover {
+  background: #F9FAFB;
+}
 
 .api-note {
   font-family: 'JetBrains Mono', monospace;

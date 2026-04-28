@@ -6,16 +6,29 @@ import service, { requestWithRetry } from './index'
  * @returns {Promise}
  */
 export function generateOntology(formData) {
-  return requestWithRetry(() => 
-    service({
-      url: '/api/graph/ontology/generate',
-      method: 'post',
-      data: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    })
-  )
+  return service({
+    url: '/api/graph/ontology/generate',
+    method: 'post',
+    timeout: 95000,
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}
+
+/**
+ * 重试本体生成（基于已有project，不需要重新上传文件）
+ * @param {Object} data - 包含project_id, simulation_requirement, additional_context
+ * @returns {Promise}
+ */
+export function retryOntology(data) {
+  return service({
+    url: '/api/graph/ontology/retry',
+    method: 'post',
+    timeout: 95000,
+    data
+  })
 }
 
 /**

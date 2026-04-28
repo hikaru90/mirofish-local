@@ -31,9 +31,29 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    LLM_EMBEDDING_MODEL = os.environ.get('LLM_EMBEDDING_MODEL')
+    GRAPHITI_LLM_MODEL = os.environ.get('GRAPHITI_LLM_MODEL')
+    GRAPHITI_PROVIDER_RETRY_ORDER = ['greenpt', 'scaleway', 'nebius', 'ovhcloud']
+    LLM_BOOST_API_KEY = os.environ.get('LLM_BOOST_API_KEY')
+    LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL')
+    LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME')
+    LLM_BOOST_EMBEDDING_MODEL = os.environ.get('LLM_BOOST_EMBEDDING_MODEL')
+    GRAPHITI_RETRY3_API_KEY = os.environ.get('GRAPHITI_RETRY3_API_KEY')
+    GRAPHITI_RETRY3_BASE_URL = os.environ.get('GRAPHITI_RETRY3_BASE_URL')
+    GRAPHITI_RETRY3_LLM_MODEL = os.environ.get('GRAPHITI_RETRY3_LLM_MODEL')
+    GRAPHITI_RETRY3_EMBEDDING_MODEL = os.environ.get('GRAPHITI_RETRY3_EMBEDDING_MODEL')
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    
+    # 图谱后端配置：zep | graphiti
+    GRAPH_BACKEND = os.environ.get('GRAPH_BACKEND', 'zep').lower()
+    
+    # Neo4j / Graphiti 配置
+    NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
+    NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
+    NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', 'neo4jpassword')
+    GRAPHITI_EMBEDDING_MODEL = os.environ.get('LLM_EMBEDDING_MODEL')
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -69,7 +89,13 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
+        if cls.GRAPH_BACKEND == 'zep' and not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
+        if cls.GRAPH_BACKEND == 'graphiti' and not cls.NEO4J_PASSWORD:
+            errors.append("NEO4J_PASSWORD 未配置")
+        if cls.GRAPH_BACKEND == 'graphiti' and not cls.GRAPHITI_EMBEDDING_MODEL:
+            errors.append("LLM_EMBEDDING_MODEL 未配置")
+        if cls.GRAPH_BACKEND == 'graphiti' and not cls.GRAPHITI_LLM_MODEL:
+            errors.append("GRAPHITI_LLM_MODEL 未配置")
         return errors
 

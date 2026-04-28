@@ -125,7 +125,36 @@ LLM_MODEL_NAME=qwen-plus
 # Zep Cloud Configuration
 # Free monthly quota is sufficient for simple usage: https://app.getzep.com/
 ZEP_API_KEY=your_zep_api_key
+
+# Graph backend selection: zep | graphiti
+GRAPH_BACKEND=zep
+
+# Local Neo4j config (required when GRAPH_BACKEND=graphiti)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=neo4jpassword
 ```
+
+#### Optional: Switch to local Graphiti + Neo4j (instead of Zep Cloud)
+
+```bash
+# Start Neo4j locally (Community Edition, free)
+docker run --name mirofish-neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/neo4jpassword \
+  -d neo4j:5
+```
+
+Then set in `.env`:
+
+```env
+GRAPH_BACKEND=graphiti
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=neo4jpassword
+```
+
+To rollback to Zep Cloud, set `GRAPH_BACKEND=zep`.
 
 #### 2. Install Dependencies
 

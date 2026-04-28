@@ -135,6 +135,9 @@
               <polyline points="12 5 19 12 12 19"></polyline>
             </svg>
           </button>
+          <button v-if="isFailed && !isComplete" class="retry-polling-btn" @click="retryPolling">
+            Retry Report Step
+          </button>
 
           <div class="workflow-divider"></div>
         </div>
@@ -425,6 +428,7 @@ const expandedContent = ref(new Set())
 const expandedLogs = ref(new Set())
 const collapsedSections = ref(new Set())
 const isComplete = ref(false)
+const isFailed = ref(false)
 const startTime = ref(null)
 const leftPanel = ref(null)
 const rightPanel = ref(null)
@@ -2020,9 +2024,32 @@ const getLogLevelClass = (log) => {
 // Polling
 let agentLogTimer = null
 let consoleLogTimer = null
+let lastLogUpdateAt = Date.now()
+const POLL_IDLE_TIMEOUT_MS = 180000 // 3 minutes without new logs
+
+const markPollingProgress = () => {
+  lastLogUpdateAt = Date.now()
+}
+
+const stopPollingAsFailed = (reason) => {
+  addLog(reason)
+  isFailed.value = true
+  emit('update-status', 'failed')
+  stopPolling()
+}
+
+const checkPollingIdleTimeout = () => {
+  const idleMs = Date.now() - lastLogUpdateAt
+  if (idleMs > POLL_IDLE_TIMEOUT_MS) {
+    stopPollingAsFailed('No new report logs for 3 minutes. Polling stopped.')
+    return true
+  }
+  return false
+}
 
 const fetchAgentLog = async () => {
   if (!props.reportId) return
+  if (checkPollingIdleTimeout()) return
   
   try {
     const res = await getAgentLog(props.reportId, agentLogLine.value)
@@ -2031,6 +2058,7 @@ const fetchAgentLog = async () => {
       const newLogs = res.data.logs || []
       
       if (newLogs.length > 0) {
+        markPollingProgress()
         newLogs.forEach(log => {
           agentLogs.value.push(log)
           
@@ -2054,10 +2082,15 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'report_complete') {
             isComplete.value = true
+            isFailed.value = false
             currentSectionIndex.value = null  // 确保清除 loading 状态
             emit('update-status', 'completed')
             stopPolling()
             // 滚动逻辑统一在循环结束后的 nextTick 中处理
+          }
+
+          if (log.action === 'error' || log.stage === 'failed') {
+            stopPollingAsFailed('Report generation failed. Polling stopped.')
           }
           
           if (log.action === 'report_start') {
@@ -2131,6 +2164,7 @@ const extractFinalContent = (response) => {
 
 const fetchConsoleLog = async () => {
   if (!props.reportId) return
+  if (checkPollingIdleTimeout()) return
   
   try {
     const res = await getConsoleLog(props.reportId, consoleLogLine.value)
@@ -2139,8 +2173,22 @@ const fetchConsoleLog = async () => {
       const newLogs = res.data.logs || []
       
       if (newLogs.length > 0) {
+        markPollingProgress()
         consoleLogs.value.push(...newLogs)
         consoleLogLine.value = res.data.from_line + newLogs.length
+
+        const hasFailureSignal = newLogs.some(line => {
+          const text = String(line || '').toLowerCase()
+          return text.includes('report generation failed') ||
+            text.includes('报告生成失败') ||
+            text.includes(' failed: ') ||
+            text.includes(' error:')
+        })
+
+        if (hasFailureSignal) {
+          stopPollingAsFailed('Report generation failed. Polling stopped.')
+          return
+        }
         
         nextTick(() => {
           if (logContent.value) {
@@ -2156,6 +2204,8 @@ const fetchConsoleLog = async () => {
 
 const startPolling = () => {
   if (agentLogTimer || consoleLogTimer) return
+  isFailed.value = false
+  lastLogUpdateAt = Date.now()
   
   fetchAgentLog()
   fetchConsoleLog()
@@ -2173,6 +2223,12 @@ const stopPolling = () => {
     clearInterval(consoleLogTimer)
     consoleLogTimer = null
   }
+}
+
+const retryPolling = () => {
+  addLog('Retrying report polling...')
+  emit('update-status', 'processing')
+  startPolling()
 }
 
 // Lifecycle
@@ -2200,6 +2256,7 @@ watch(() => props.reportId, (newId) => {
     expandedLogs.value = new Set()
     collapsedSections.value = new Set()
     isComplete.value = false
+    isFailed.value = false
     startTime.value = null
     
     startPolling()
@@ -3430,6 +3487,24 @@ watch(() => props.reportId, (newId) => {
 
 .next-step-btn:hover svg {
   transform: translateX(4px);
+}
+
+.retry-polling-btn {
+  width: calc(100% - 40px);
+  margin: 10px 20px 0 20px;
+  border: 1px solid #DC2626;
+  background: #FFF1F2;
+  color: #B91C1C;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.retry-polling-btn:hover {
+  background: #FFE4E6;
 }
 
 /* Workflow Empty */

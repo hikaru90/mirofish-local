@@ -58,8 +58,11 @@
           :ontologyProgress="ontologyProgress"
           :buildProgress="buildProgress"
           :graphData="graphData"
+          :error="error"
           :systemLogs="systemLogs"
           @next-step="handleNextStep"
+          @retry-step="handleRetryStep"
+          @clear-error="handleClearError"
         />
         <!-- Step 2: 环境搭建 -->
         <Step2EnvSetup
@@ -109,6 +112,7 @@ const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
 const ontologyProgress = ref(null)
 const buildProgress = ref(null)
 const systemLogs = ref([])
+const dismissedErrorForProject = ref('')
 
 // Polling timers
 let pollTimer = null
@@ -184,6 +188,9 @@ const handleGoBack = () => {
 
 const initProject = async () => {
   addLog('Project view initialized.')
+  if (currentProjectId.value) {
+    dismissedErrorForProject.value = localStorage.getItem(`graphErrorDismissed:${currentProjectId.value}`) || ''
+  }
   if (currentProjectId.value === 'new') {
     await handleNewProject()
   } else {
@@ -224,9 +231,18 @@ const handleNewProject = async () => {
       addLog(`Error generating ontology: ${error.value}`)
     }
   } catch (err) {
-    error.value = err.message
+    const message = err?.message || ''
+    if (message.includes('timeout')) {
+      error.value = 'Ontology generation timed out. Please retry or switch LLM provider.'
+    } else if (message.includes('Network Error')) {
+      error.value = 'Network connection to backend failed. Please check backend status and retry.'
+    } else {
+      error.value = message
+    }
+    ontologyProgress.value = null
     addLog(`Exception in handleNewProject: ${err.message}`)
   } finally {
+    ontologyProgress.value = null
     loading.value = false
   }
 }
@@ -250,6 +266,25 @@ const loadProject = async () => {
       } else if (res.data.status === 'graph_completed' && res.data.graph_id) {
         currentPhase.value = 2
         await loadGraph(res.data.graph_id)
+      } else if (res.data.status === 'failed' && res.data.graph_id) {
+        // A failed build can still leave partially built graph data in backend.
+        // Keep rendering what's already available.
+        currentPhase.value = 1
+        if (res.data.graph_build_task_id) {
+          try {
+            const taskRes = await getTaskStatus(res.data.graph_build_task_id)
+            if (taskRes.success && taskRes.data) {
+              buildProgress.value = {
+                progress: taskRes.data.progress || 0,
+                message: taskRes.data.message || ''
+              }
+            }
+          } catch (taskErr) {
+            // Old task ids may no longer exist after server restart. Ignore this.
+            console.warn('Unable to load historical task progress:', taskErr?.message || taskErr)
+          }
+        }
+        await loadGraph(res.data.graph_id)
       }
     } else {
       error.value = res.error
@@ -269,17 +304,25 @@ const updatePhaseByStatus = (status) => {
     case 'ontology_generated': currentPhase.value = 0; break;
     case 'graph_building': currentPhase.value = 1; break;
     case 'graph_completed': currentPhase.value = 2; break;
-    case 'failed': error.value = 'Project failed'; break;
+    case 'failed': {
+      const persistedError = projectData.value?.error || 'Project failed'
+      error.value = dismissedErrorForProject.value === persistedError ? '' : persistedError
+      break
+    }
   }
 }
 
-const startBuildGraph = async () => {
+const startBuildGraph = async (options = {}) => {
   try {
+    const { force = false } = options
+    error.value = ''
+    stopPolling()
+    stopGraphPolling()
     currentPhase.value = 1
     buildProgress.value = { progress: 0, message: 'Starting build...' }
     addLog('Initiating graph build...')
     
-    const res = await buildGraph({ project_id: currentProjectId.value })
+    const res = await buildGraph({ project_id: currentProjectId.value, force })
     if (res.success) {
       addLog(`Graph build task started. Task ID: ${res.data.task_id}`)
       startGraphPolling()
@@ -289,8 +332,14 @@ const startBuildGraph = async () => {
       addLog(`Error starting build: ${res.error}`)
     }
   } catch (err) {
-    error.value = err.message
-    addLog(`Exception in startBuildGraph: ${err.message}`)
+    const backendError =
+      err?.response?.data?.error ||
+      err?.response?.data?.message ||
+      err?.response?.data?.traceback ||
+      err?.message ||
+      'Unknown error'
+    error.value = backendError
+    addLog(`Exception in startBuildGraph: ${backendError}`)
   }
 }
 
@@ -382,6 +431,25 @@ const refreshGraph = () => {
     addLog('Manual graph refresh triggered.')
     loadGraph(projectData.value.graph_id)
   }
+}
+
+const handleRetryStep = async (step) => {
+  if (step === 'graph') {
+    addLog('Retrying graph build (resume mode)...')
+    dismissedErrorForProject.value = ''
+    if (currentProjectId.value) {
+      localStorage.removeItem(`graphErrorDismissed:${currentProjectId.value}`)
+    }
+    await startBuildGraph()
+  }
+}
+
+const handleClearError = () => {
+  if (!currentProjectId.value || !error.value) return
+  dismissedErrorForProject.value = error.value
+  localStorage.setItem(`graphErrorDismissed:${currentProjectId.value}`, error.value)
+  error.value = ''
+  addLog('Last build error dismissed.')
 }
 
 const stopPolling = () => {

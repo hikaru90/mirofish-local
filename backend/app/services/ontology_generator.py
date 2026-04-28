@@ -214,6 +214,7 @@ class OntologyGenerator:
         ]
         
         # 调用LLM
+        logger.info(f"Ontology generation using model: {self.llm_client.model}")
         result = self.llm_client.chat_json(
             messages=messages,
             temperature=0.3,
