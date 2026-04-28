@@ -26,6 +26,17 @@
             <div class="spinner-sm"></div>
             <span>{{ ontologyProgress.message || $t('step1.analyzingDocs') }}</span>
           </div>
+          <div v-else-if="currentPhase === 0 && error" class="retry-panel">
+            <div class="retry-error">Ontology generation failed: {{ error }}</div>
+            <div class="retry-actions">
+              <button class="retry-btn" @click="emit('retry-step', 'ontology')">
+                Retry Ontology Generation
+              </button>
+              <button class="dismiss-btn" @click="emit('clear-error')">
+                Dismiss Last Error
+              </button>
+            </div>
+          </div>
 
           <!-- Detail Overlay -->
           <div v-if="selectedOntologyItem" class="ontology-detail-overlay">

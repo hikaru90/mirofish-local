@@ -257,26 +257,6 @@ class SimulationConfigGenerator:
             }
         ]
 
-        if all([Config.LLM_BOOST_API_KEY, Config.LLM_BOOST_BASE_URL, Config.LLM_BOOST_MODEL_NAME]):
-            providers.append(
-                {
-                    "name": "boost",
-                    "api_key": Config.LLM_BOOST_API_KEY,
-                    "base_url": Config.LLM_BOOST_BASE_URL,
-                    "model_name": Config.LLM_BOOST_MODEL_NAME,
-                }
-            )
-
-        if all([Config.GRAPHITI_RETRY3_API_KEY, Config.GRAPHITI_RETRY3_BASE_URL, Config.GRAPHITI_RETRY3_LLM_MODEL]):
-            providers.append(
-                {
-                    "name": "retry3",
-                    "api_key": Config.GRAPHITI_RETRY3_API_KEY,
-                    "base_url": Config.GRAPHITI_RETRY3_BASE_URL,
-                    "model_name": Config.GRAPHITI_RETRY3_LLM_MODEL,
-                }
-            )
-
         return providers
     
     def generate_config(

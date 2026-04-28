@@ -34,14 +34,7 @@ class Config:
     LLM_EMBEDDING_MODEL = os.environ.get('LLM_EMBEDDING_MODEL')
     GRAPHITI_LLM_MODEL = os.environ.get('GRAPHITI_LLM_MODEL')
     GRAPHITI_PROVIDER_RETRY_ORDER = ['greenpt', 'scaleway', 'nebius', 'ovhcloud']
-    LLM_BOOST_API_KEY = os.environ.get('LLM_BOOST_API_KEY')
-    LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL')
-    LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME')
-    LLM_BOOST_EMBEDDING_MODEL = os.environ.get('LLM_BOOST_EMBEDDING_MODEL')
-    GRAPHITI_RETRY3_API_KEY = os.environ.get('GRAPHITI_RETRY3_API_KEY')
-    GRAPHITI_RETRY3_BASE_URL = os.environ.get('GRAPHITI_RETRY3_BASE_URL')
-    GRAPHITI_RETRY3_LLM_MODEL = os.environ.get('GRAPHITI_RETRY3_LLM_MODEL')
-    GRAPHITI_RETRY3_EMBEDDING_MODEL = os.environ.get('GRAPHITI_RETRY3_EMBEDDING_MODEL')
+    
     # Internal LLM request throttle/retry (applies to LLMClient calls)
     LLM_RATE_LIMIT_RPS = float(os.environ.get('LLM_RATE_LIMIT_RPS', '1.0'))
     LLM_RATE_LIMIT_MAX_RETRIES = int(os.environ.get('LLM_RATE_LIMIT_MAX_RETRIES', '3'))
@@ -57,7 +50,7 @@ class Config:
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
     NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
     NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', 'neo4jpassword')
-    GRAPHITI_EMBEDDING_MODEL = os.environ.get('LLM_EMBEDDING_MODEL')
+    LLM_EMBEDDING_MODEL = os.environ.get('LLM_EMBEDDING_MODEL')
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -97,7 +90,7 @@ class Config:
             errors.append("ZEP_API_KEY 未配置")
         if cls.GRAPH_BACKEND == 'graphiti' and not cls.NEO4J_PASSWORD:
             errors.append("NEO4J_PASSWORD 未配置")
-        if cls.GRAPH_BACKEND == 'graphiti' and not cls.GRAPHITI_EMBEDDING_MODEL:
+        if cls.GRAPH_BACKEND == 'graphiti' and not cls.LLM_EMBEDDING_MODEL:
             errors.append("LLM_EMBEDDING_MODEL 未配置")
         if cls.GRAPH_BACKEND == 'graphiti' and not cls.GRAPHITI_LLM_MODEL:
             errors.append("GRAPHITI_LLM_MODEL 未配置")

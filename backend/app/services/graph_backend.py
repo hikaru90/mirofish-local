@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, get_origin
 
-from pydantic import Field
+from pydantic import Field, create_model
 
 from ..config import Config
 from ..utils.locale import t
@@ -434,6 +434,7 @@ class GraphitiBackend(GraphBackend):
         self._Node = Node
         self._EpisodeType = EpisodeType
         self._indices_initialized = False
+        self._ontology_entity_types_by_graph: Dict[str, Dict[str, Any]] = {}
         # Graphiti/Neo4j async driver objects are loop-bound.
         # Keep one dedicated loop for this backend instance.
         self._loop = asyncio.new_event_loop()
@@ -450,25 +451,9 @@ class GraphitiBackend(GraphBackend):
             "api_key": Config.LLM_API_KEY,
             "base_url": Config.LLM_BASE_URL,
             "llm_model": Config.GRAPHITI_LLM_MODEL,
-            "embedding_model": Config.GRAPHITI_EMBEDDING_MODEL,
+            "embedding_model": Config.LLM_EMBEDDING_MODEL,
         })
-        if all([Config.LLM_BOOST_API_KEY, Config.LLM_BOOST_BASE_URL, Config.LLM_BOOST_MODEL_NAME]):
-            profiles.append({
-                "name": "boost",
-                "api_key": Config.LLM_BOOST_API_KEY,
-                "base_url": Config.LLM_BOOST_BASE_URL,
-                "llm_model": Config.LLM_BOOST_MODEL_NAME,
-                "embedding_model": Config.LLM_BOOST_EMBEDDING_MODEL or Config.GRAPHITI_EMBEDDING_MODEL,
-            })
-        if all([Config.GRAPHITI_RETRY3_API_KEY, Config.GRAPHITI_RETRY3_BASE_URL, Config.GRAPHITI_RETRY3_LLM_MODEL, Config.GRAPHITI_RETRY3_EMBEDDING_MODEL]):
-            profiles.append({
-                "name": "retry3",
-                "api_key": Config.GRAPHITI_RETRY3_API_KEY,
-                "base_url": Config.GRAPHITI_RETRY3_BASE_URL,
-                "llm_model": Config.GRAPHITI_RETRY3_LLM_MODEL,
-                "embedding_model": Config.GRAPHITI_RETRY3_EMBEDDING_MODEL,
-            })
-        return profiles[:3]
+        return profiles[:1]
 
     def _create_graphiti_client(self, profile: Dict[str, str]):
         llm_config = self._LLMConfig(
@@ -500,8 +485,40 @@ class GraphitiBackend(GraphBackend):
         return f"mirofish_{uuid.uuid4().hex[:16]}"
 
     def set_ontology(self, graph_id: str, ontology: Dict[str, Any]):
-        # Graphiti 对本体是可选增强，MVP阶段保持接口兼容，不阻塞构建流程。
-        return
+        # Graphiti 通过 add_episode(entity_types=...) 接收自定义实体类型。
+        # 这里把接口1生成的 ontology 预编译成 Graphiti 可用的 pydantic 模型。
+        RESERVED_NAMES = {'uuid', 'name', 'group_id', 'name_embedding', 'summary', 'created_at'}
+
+        def safe_attr_name(attr_name: str) -> str:
+            if attr_name.lower() in RESERVED_NAMES:
+                return f"entity_{attr_name}"
+            return attr_name
+
+        entity_types: Dict[str, Any] = {}
+        for entity_def in ontology.get("entity_types", []):
+            if not isinstance(entity_def, dict):
+                continue
+            entity_name = str(entity_def.get("name", "")).strip()
+            if not entity_name:
+                continue
+            description = entity_def.get("description", f"A {entity_name} entity.")
+
+            fields: Dict[str, Any] = {}
+            for attr_def in entity_def.get("attributes", []):
+                if not isinstance(attr_def, dict):
+                    continue
+                raw_attr_name = str(attr_def.get("name", "")).strip()
+                if not raw_attr_name:
+                    continue
+                attr_name = safe_attr_name(raw_attr_name)
+                attr_desc = attr_def.get("description", attr_name)
+                fields[attr_name] = (Optional[str], Field(default=None, description=attr_desc))
+
+            # Graphiti 只要求 pydantic 模型定义字段；不需要继承 EntityNode。
+            entity_model = create_model(entity_name, __doc__=description, **fields)
+            entity_types[entity_name] = entity_model
+
+        self._ontology_entity_types_by_graph[graph_id] = entity_types
 
     def add_text_batches(
         self,
@@ -533,6 +550,7 @@ class GraphitiBackend(GraphBackend):
                             reference_time=datetime.utcnow(),
                             source=self._EpisodeType.text,
                             group_id=graph_id,
+                            entity_types=self._ontology_entity_types_by_graph.get(graph_id) or None,
                         )
                     )
                     episode_uuids.append(result.episode.uuid)

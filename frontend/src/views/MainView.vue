@@ -86,7 +86,7 @@ import { useI18n } from 'vue-i18n'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
-import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
+import { generateOntology, retryOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 
@@ -435,6 +435,52 @@ const refreshGraph = () => {
 }
 
 const handleRetryStep = async (step) => {
+  if (step === 'ontology') {
+    if (!currentProjectId.value || currentProjectId.value === 'new') {
+      error.value = 'Cannot retry ontology generation: project id is missing.'
+      addLog('Retry ontology failed: missing project id.')
+      return
+    }
+    addLog('Retrying ontology generation...')
+    dismissedErrorForProject.value = ''
+    localStorage.removeItem(`graphErrorDismissed:${currentProjectId.value}`)
+    error.value = ''
+    buildProgress.value = null
+    stopPolling()
+    stopGraphPolling()
+    currentPhase.value = 0
+    ontologyProgress.value = { message: 'Retrying ontology generation...' }
+    try {
+      const res = await retryOntology({
+        project_id: currentProjectId.value,
+        simulation_requirement: projectData.value?.simulation_requirement
+      })
+      if (res.success) {
+        projectData.value = {
+          ...(projectData.value || {}),
+          ...res.data
+        }
+        ontologyProgress.value = null
+        addLog('Ontology retry succeeded. Starting graph build...')
+        await startBuildGraph()
+      } else {
+        ontologyProgress.value = null
+        error.value = res.error || 'Ontology retry failed'
+        addLog(`Ontology retry failed: ${error.value}`)
+      }
+    } catch (err) {
+      ontologyProgress.value = null
+      const backendError =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Unknown error'
+      error.value = backendError
+      addLog(`Exception in ontology retry: ${backendError}`)
+    }
+    return
+  }
+
   if (step === 'graph') {
     addLog('Retrying graph build (resume mode)...')
     dismissedErrorForProject.value = ''
